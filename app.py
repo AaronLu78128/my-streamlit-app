@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import os
 import json
+import gc  # 導入垃圾回收模組機制，輔助釋放檔案鎖定
+import re
 
 # 1. 頁面基本設定
 st.set_page_config(
@@ -28,10 +31,9 @@ st.title("📊 客訴 List 數據分析與多視角對照平台")
 # 2. 建立檔案大廳與常用資料夾儲存機制
 UPLOAD_DIR = "uploaded_files"
 FAVORITES_FILE = "favorites.json"
-CONFIG_FILE = "saved_configs.json"
 
 if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def load_favorites():
     if os.path.exists(FAVORITES_FILE):
@@ -43,8 +45,14 @@ def load_favorites():
     return []
 
 def save_favorites(fav_list):
-    with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
-        json.dump(fav_list, f, ensure_ascii=False, indent=4)
+    try:
+        with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
+            json.dump(fav_list, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        st.error(f"儲存常用時發生錯誤：{e}")
+
+if "fav_list" not in st.session_state:
+    st.session_state.fav_list = load_favorites()
 
 if "current_file" not in st.session_state:
     st.session_state.current_file = None
@@ -76,18 +84,28 @@ st.sidebar.subheader("📂 檔案清單")
 if saved_files and (st.session_state.current_file not in saved_files):
     st.session_state.current_file = saved_files[0]
 
+# 刪除檔案按鈕邏輯
 if saved_files:
     for filename in saved_files:
         col_del, col_select = st.sidebar.columns([1, 4])
         
         if col_del.button("❌", key=f"del_{filename}", help=f"刪除 {filename}"):
             file_to_delete = os.path.join(UPLOAD_DIR, filename)
+            
+            if st.session_state.current_file == filename:
+                st.session_state.current_file = None
+
+            gc.collect()
+
             if os.path.exists(file_to_delete):
-                os.remove(file_to_delete)
-                if st.session_state.current_file == filename:
-                    st.session_state.current_file = None
-                st.rerun()
-        
+                try:
+                    os.remove(file_to_delete)
+                    st.rerun()
+                except PermissionError:
+                    st.sidebar.error("⚠️ 檔案正被系統佔用，請重新整理頁面後再試一次！")
+                except Exception as e:
+                    st.sidebar.error(f"⚠️ 刪除失敗：{e}")
+
         is_selected = (filename == st.session_state.current_file)
         btn_label = f"📌 {filename}" if is_selected else f"📄 {filename}"
         btn_type = "primary" if is_selected else "secondary"
@@ -98,26 +116,21 @@ if saved_files:
 else:
     st.sidebar.info("💡 目前大廳是空的，請先在上方上傳 Excel 檔案！")
 
-# 4. 側邊欄：⭐ 常用圖表庫 (常用資料夾)
+# 4. 側邊欄：⭐ 常用圖表庫
 st.sidebar.markdown("---")
 st.sidebar.header("📁 常用圖表庫 (常用資料夾)")
 
-fav_list = load_favorites()
-
-if not fav_list:
+if not st.session_state.fav_list:
     st.sidebar.info("💡 目前沒有常用圖表。繪製完圖表後，點擊圖表下方的「⭐ 加入常用」即可存入！")
 else:
-    for idx_fav, fav_item in enumerate(fav_list):
+    for idx_fav, fav_item in enumerate(st.session_state.fav_list):
         col_fav_del, col_fav_load = st.sidebar.columns([1, 4])
         
-        # 刪除常用功能
         if col_fav_del.button("❌", key=f"del_fav_{idx_fav}", help=f"刪除常用：{fav_item['name']}"):
-            fav_list.pop(idx_fav)
-            save_favorites(fav_list)
-            st.sidebar.success(f"🗑️ 已刪除「{fav_item['name']}」")
+            st.session_state.fav_list.pop(idx_fav)
+            save_favorites(st.session_state.fav_list)
             st.rerun()
         
-        # 點擊直接載入常用圖表至第一個視角
         if col_fav_load.button(f"📌 {fav_item['name']}", key=f"load_fav_{idx_fav}", use_container_width=True):
             st.session_state.current_file = fav_item["file"]
             st.session_state["sheet_0"] = fav_item["sheet"]
@@ -130,69 +143,141 @@ else:
 
 # 5. 讀取與解析 Excel 資料
 def load_and_clean_excel(file_path, sheet_name=None):
-    xls = pd.ExcelFile(file_path)
-    sheet_names = xls.sheet_names
-    
-    if not sheet_name or sheet_name not in sheet_names:
-        sheet_name = sheet_names[0]
-        for name in sheet_names:
-            if "客" in name or "list" in name.lower():
-                sheet_name = name
-                break
+    with pd.ExcelFile(file_path) as xls:
+        sheet_names = xls.sheet_names
+        
+        if not sheet_name or sheet_name not in sheet_names:
+            sheet_name = sheet_names[0]
+            for name in sheet_names:
+                if "客" in name or "list" in name.lower():
+                    sheet_name = name
+                    break
 
-    df = pd.read_excel(file_path, sheet_name=sheet_name, header=1)
-    df.columns = [str(col).strip() for col in df.columns]
-    valid_cols = [col for col in df.columns if col != "" and not col.startswith("Unnamed") and col.lower() != "nan"]
-    
-    if len(valid_cols) == 0:
-        df = pd.read_excel(file_path, sheet_name=sheet_name, header=0)
+        df = pd.read_excel(xls, sheet_name=sheet_name, header=1)
         df.columns = [str(col).strip() for col in df.columns]
         valid_cols = [col for col in df.columns if col != "" and not col.startswith("Unnamed") and col.lower() != "nan"]
+        
+        if len(valid_cols) == 0:
+            df = pd.read_excel(xls, sheet_name=sheet_name, header=0)
+            df.columns = [str(col).strip() for col in df.columns]
+            valid_cols = [col for col in df.columns if col != "" and not col.startswith("Unnamed") and col.lower() != "nan"]
 
-    df = df[valid_cols]
-    df = df.dropna(how='all')
-    return df, sheet_names, sheet_name
+        df = df[valid_cols]
+        df = df.dropna(how='all')
 
-# 6. 核心函式：圖表計算與生成
+        for col in df.columns:
+            if pd.api.types.is_float_dtype(df[col]):
+                non_nulls = df[col].dropna()
+                if (non_nulls % 1 == 0).all():
+                    df[col] = df[col].astype("Int64")
+
+        return df, sheet_names, sheet_name
+
+# 6. 核心函式：圖表計算與生成（限定 Y 軸為資料筆數與自動偵測不良數量加總）
 def process_and_render_chart(df, x_axis, legend_axis, y_axis, chart_type, chart_height=420):
-    color_col = None if legend_axis == "無" else legend_axis
     calc_df = df.copy()
 
-    if y_axis == "不良數量":
-        calc_df["不良數量"] = pd.to_numeric(calc_df["不良數量"], errors='coerce').fillna(0)
-        y_metric = "不良數量 (總和)" if color_col == "不良數量" else "不良數量"
+    # 1. 強制將 X 軸轉為字串（離散類別），避免數值型態導致座標對不準
+    calc_df[x_axis] = calc_df[x_axis].astype(str)
 
-        if color_col and x_axis != color_col:
-            grouped_df = calc_df.groupby([x_axis, color_col])["不良數量"].sum().reset_index(name=y_metric)
+    color_col = None if legend_axis == "無" else legend_axis
+
+    # 2. 自動偵測「不良數量」欄位（尋找欄位名稱包含「不良」關鍵字）
+    defect_col = None
+    for col in calc_df.columns:
+        if "不良" in str(col):
+            defect_col = col
+            break
+
+    # 3. Y 軸資料範圍計算（限定為：資料筆數 / 不良數量加總）
+    if y_axis == "不良數量":
+        if defect_col:
+            # 清理資料：提取純數字，非數值者轉為 0
+            calc_df[defect_col] = pd.to_numeric(
+                calc_df[defect_col].astype(str).str.extract(r'(\d+)')[0], 
+                errors='coerce'
+            ).fillna(0)
+            
+            target_col = defect_col
+            y_metric = f"{defect_col} (總和)"
         else:
-            grouped_df = calc_df.groupby([x_axis])["不良數量"].sum().reset_index(name=y_metric)
+            # 若無不良數量欄位則 fallback 為資料筆數
+            target_col = None
+            y_metric = "資料筆數"
+    else:
+        # y_axis 為 "資料筆數"
+        target_col = None
+        y_metric = "資料筆數"
+
+    # 4. 資料聚合計算
+    if target_col:
+        # 數字「實際加總 (.sum())」
+        if color_col and x_axis != color_col:
+            grouped_df = calc_df.groupby([x_axis, color_col], as_index=False)[target_col].sum()
+            grouped_df.rename(columns={target_col: y_metric}, inplace=True)
+        else:
+            grouped_df = calc_df.groupby([x_axis], as_index=False)[target_col].sum()
+            grouped_df.rename(columns={target_col: y_metric}, inplace=True)
             color_col = None
     else:
-        y_metric = "數量"
+        # 資料筆數採用「計數 (.size())」
         if color_col and x_axis != color_col:
-            grouped_df = calc_df.groupby([x_axis, color_col]).size().reset_index(name="數量")
+            grouped_df = calc_df.groupby([x_axis, color_col], as_index=False).size().rename(columns={"size": y_metric})
         else:
-            grouped_df = calc_df.groupby([x_axis]).size().reset_index(name="數量")
+            grouped_df = calc_df.groupby([x_axis], as_index=False).size().rename(columns={"size": y_metric})
             color_col = None
 
-    if chart_type == "堆疊直條圖 (Stacked)":
-        fig = px.bar(grouped_df, x=x_axis, y=y_metric, color=color_col, barmode="stack", text_auto=True)
-    elif chart_type == "聚集直條圖 (Grouped)":
-        fig = px.bar(grouped_df, x=x_axis, y=y_metric, color=color_col, barmode="group", text_auto=True)
-    elif chart_type == "折線圖 (Line)":
-        fig = px.line(grouped_df, x=x_axis, y=y_metric, color=color_col, markers=True)
-    elif chart_type == "圓餅圖 (Pie)":
-        fig = px.pie(grouped_df, names=x_axis, values=y_metric)
+    # 5. 繪製圖表（聚集直條圖採用 Pivot 矩陣化，確保多圖例項目時置中對齊）
+    if chart_type == "聚集直條圖 (Grouped)" and color_col:
+        pivot_df = grouped_df.pivot(index=x_axis, columns=color_col, values=y_metric)
 
-    fig.update_layout(
-        font=dict(family="Microsoft JhengHei", size=13),
-        height=chart_height,
-        margin=dict(l=10, r=10, t=25, b=10),
-        xaxis_title=x_axis,
-        yaxis_title=y_metric,
-        legend_title=color_col if color_col else ""
-    )
-    return fig, grouped_df
+        fig = go.Figure()
+        for cat in pivot_df.columns:
+            y_data = pivot_df[cat]
+            fig.add_trace(go.Bar(
+                x=pivot_df.index,
+                y=y_data,
+                name=str(cat),
+                # 只有 > 0 才印數字標籤，並加入千分位格式
+                text=[f"{int(val):,}" if pd.notnull(val) and val > 0 else "" for val in y_data],
+                textposition='auto'
+            ))
+
+        fig.update_layout(
+            barmode='group',
+            bargap=0.2,
+            bargroupgap=0.03,
+            font=dict(family="Microsoft JhengHei", size=13),
+            height=chart_height,
+            margin=dict(l=10, r=10, t=25, b=10),
+            xaxis_title=x_axis,
+            yaxis_title=y_metric,
+            legend_title=color_col
+        )
+        fig.update_xaxes(type='category')
+        return fig, grouped_df
+
+    else:
+        # 其他圖表類型（堆疊圖、折線圖、圓餅圖）
+        if chart_type == "堆疊直條圖 (Stacked)":
+            fig = px.bar(grouped_df, x=x_axis, y=y_metric, color=color_col, barmode="stack", text_auto=True)
+        elif chart_type == "折線圖 (Line)":
+            fig = px.line(grouped_df, x=x_axis, y=y_metric, color=color_col, markers=True)
+        elif chart_type == "圓餅圖 (Pie)":
+            fig = px.pie(grouped_df, names=x_axis, values=y_metric)
+        else:
+            fig = px.bar(grouped_df, x=x_axis, y=y_metric, color=color_col, text_auto=True)
+
+        fig.update_layout(
+            font=dict(family="Microsoft JhengHei", size=13),
+            height=chart_height,
+            margin=dict(l=10, r=10, t=25, b=10),
+            xaxis_title=x_axis,
+            yaxis_title=y_metric,
+            legend_title=color_col if color_col else ""
+        )
+        fig.update_xaxes(type='category')
+        return fig, grouped_df
 
 # 7. 主頁面顯示設定
 selected_filename = st.session_state.current_file
@@ -215,8 +300,8 @@ else:
     st.subheader(f"📌 當前分析檔案：`{selected_filename}` (同時顯示 {num_charts} 個圖表視角)")
 
     try:
-        xls = pd.ExcelFile(file_path)
-        sheet_names = xls.sheet_names
+        with pd.ExcelFile(file_path) as xls:
+            sheet_names = xls.sheet_names
 
         cols = st.columns(num_charts)
 
@@ -226,6 +311,7 @@ else:
                 
                 with st.expander(f"⚙️ 設定視角 {idx+1} 參數", expanded=True):
                     sheet_key = f"sheet_{idx}"
+                    
                     if sheet_key in st.session_state and st.session_state[sheet_key] not in sheet_names:
                         st.session_state[sheet_key] = sheet_names[0]
 
@@ -249,15 +335,13 @@ else:
                             key=x_key
                         )
                         
-                        # X 軸範圍選取過濾
                         unique_x_vals = df[x_axis].dropna().unique().tolist()
                         filter_key = f"x_filter_{idx}"
                         
-                        if filter_key in st.session_state and isinstance(st.session_state[filter_key], list):
-                            valid_vals = [v for v in st.session_state[filter_key] if v in unique_x_vals]
-                            st.session_state[filter_key] = valid_vals if valid_vals else unique_x_vals
-                        elif filter_key not in st.session_state:
+                        if filter_key not in st.session_state:
                             st.session_state[filter_key] = unique_x_vals
+                        elif isinstance(st.session_state[filter_key], list):
+                            st.session_state[filter_key] = [v for v in st.session_state[filter_key] if v in unique_x_vals]
 
                         selected_x_vals = st.multiselect(
                             f"🔍 選擇 X 軸 ({x_axis}) 顯示範圍：",
@@ -278,13 +362,14 @@ else:
                             key=leg_key
                         )
                         
-                        y_opts = ["資料筆數 (Count)"] + cols_list
+                        # 🔧 關鍵更新：限定 Y 軸選項為「資料筆數」與「不良數量」
+                        y_opts = ["資料筆數", "不良數量"]
                         y_key = f"y_{idx}"
                         if y_key in st.session_state and st.session_state[y_key] not in y_opts:
-                            st.session_state[y_key] = "資料筆數 (Count)"
+                            st.session_state[y_key] = "資料筆數"
 
                         y_axis = st.selectbox(
-                            "統計欄位（Y 軸）",
+                            "統計欄位（Y 軸數值）",
                             options=y_opts,
                             key=y_key
                         )
@@ -310,13 +395,12 @@ else:
                         
                         st.plotly_chart(fig, use_container_width=True)
 
-                        # 📌 按鈕：將繪製好的圖表加入常用資料夾
                         with st.popover("⭐ 將此圖表存入常用資料夾"):
                             default_fav_title = f"{chosen_sheet}-{x_axis}"
                             fav_title = st.text_input("常用圖表名稱：", value=default_fav_title, key=f"fav_title_in_{idx}")
+                            
                             if st.button("💾 確認儲存", key=f"btn_save_fav_{idx}", use_container_width=True):
                                 if fav_title.strip():
-                                    current_favs = load_favorites()
                                     new_fav = {
                                         "name": fav_title.strip(),
                                         "file": selected_filename,
@@ -327,10 +411,9 @@ else:
                                         "y_axis": y_axis,
                                         "chart_type": chart_type
                                     }
-                                    # 若名稱重複則覆蓋舊的，否則新增
-                                    current_favs = [f for f in current_favs if f["name"] != fav_title.strip()]
-                                    current_favs.append(new_fav)
-                                    save_favorites(current_favs)
+                                    st.session_state.fav_list = [f for f in st.session_state.fav_list if f["name"] != fav_title.strip()]
+                                    st.session_state.fav_list.append(new_fav)
+                                    save_favorites(st.session_state.fav_list)
                                     st.success(f"🎉 已將「{fav_title.strip()}」存入常用資料夾！")
                                     st.rerun()
                                 else:
