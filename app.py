@@ -142,6 +142,7 @@ else:
             st.rerun()
 
 # 5. 讀取與解析 Excel 資料
+@st.cache_data(ttl=3600)
 def load_and_clean_excel(file_path, sheet_name=None):
     with pd.ExcelFile(file_path) as xls:
         sheet_names = xls.sheet_names
@@ -174,6 +175,7 @@ def load_and_clean_excel(file_path, sheet_name=None):
         return df, sheet_names, sheet_name
 
 # 6. 核心函式：圖表計算與生成（限定 Y 軸為資料筆數與自動偵測不良數量加總）
+@st.cache_data(ttl=3600)
 def process_and_render_chart(df, x_axis, legend_axis, y_axis, chart_type, chart_height=420):
     calc_df = df.copy()
 
