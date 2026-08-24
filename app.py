@@ -144,7 +144,7 @@ else:
             st.rerun()
 
 # ---------------------------------------------------------
-# 4. 數據讀取與繪圖處理（精確匹配「不良數量」）
+# 4. 數據讀取與繪圖處理
 # ---------------------------------------------------------
 @st.cache_data(ttl=3600)
 def load_and_clean_excel(file_path, sheet_name=None):
@@ -157,7 +157,7 @@ def load_and_clean_excel(file_path, sheet_name=None):
                     sheet_name = name
                     break
 
-        # 以 header=1 (即 Excel 第 2 列為欄位表頭) 讀取資料
+        # 以 header=1 (即 Excel 第 2 列為欄位標題) 讀取資料
         df = pd.read_excel(xls, sheet_name=sheet_name, header=1)
         df.columns = [str(col).strip() for col in df.columns]
         valid_cols = [col for col in df.columns if col != "" and not col.startswith("Unnamed") and col.lower() != "nan"]
@@ -181,6 +181,9 @@ def process_and_render_chart(df, x_axis, legend_axis, y_axis, chart_type, chart_
     calc_df = df.copy()
     calc_df[x_axis] = calc_df[x_axis].astype(str)
     color_col = None if legend_axis == "無" else legend_axis
+
+    if color_col and color_col in calc_df.columns:
+        calc_df[color_col] = calc_df[color_col].astype(str)
 
     exact_defect_col = "不良數量" if "不良數量" in calc_df.columns else None
 
@@ -210,15 +213,60 @@ def process_and_render_chart(df, x_axis, legend_axis, y_axis, chart_type, chart_
             grouped_df = calc_df.groupby([x_axis], as_index=False).size().rename(columns={"size": y_metric})
             color_col = None
 
+    # 🎨 定義圖中對應的專屬顏色對照表
+    CUSTOM_COLOR_MAP = {
+        "EOS/ESD": "#0066CC",                   # 深藍
+        "溫校異常": "#66C2FF",                 # 天藍
+        "系統應用": "#FF1A3C",                 # 鮮紅
+        "供應商": "#FFA8B6",                   # 粉紅
+        "Sample 受損": "#00B386",             # 綠/青綠
+        "Design problem": "#66E6A3",          # 淺綠
+        "其他": "#FF8033",                     # 橘色
+        "測試coverage": "#FFC658",             # 黃色
+        "組裝製程_(壓合、燒錄等)": "#6A3AAD"      # 紫色
+    }
+
+    # 預設備用通用調色盤
+    color_palette = [
+        "#0066CC", "#66C2FF", "#FF1A3C", "#FFA8B6", 
+        "#00B386", "#66E6A3", "#FF8033", "#FFC658", "#6A3AAD"
+    ]
+
+    # 🎯 針對直條圖/折線圖進行數字優先的正向排序
+    def extract_num(series):
+        extracted = series.astype(str).str.extract(r'(\d+)')[0]
+        return pd.to_numeric(extracted, errors='coerce')
+
+    sort_cols = [x_axis]
+    if color_col:
+        sort_cols.append(color_col)
+    
+    grouped_df.sort_values(
+        by=sort_cols, 
+        key=extract_num,
+        inplace=True
+    )
+
+    # 建立類別順序字典
+    cat_orders = {}
+    if x_axis in grouped_df.columns:
+        cat_orders[x_axis] = sorted(grouped_df[x_axis].unique(), key=lambda v: pd.to_numeric(''.join(filter(str.isdigit, str(v))), errors='coerce') if any(c.isdigit() for c in str(v)) else v)
+    if color_col and color_col in grouped_df.columns:
+        cat_orders[color_col] = sorted(grouped_df[color_col].unique(), key=lambda v: pd.to_numeric(''.join(filter(str.isdigit, str(v))), errors='coerce') if any(c.isdigit() for c in str(v)) else v)
+
     if chart_type == "聚集直條圖 (Grouped)" and color_col:
         pivot_df = grouped_df.pivot(index=x_axis, columns=color_col, values=y_metric)
         fig = go.Figure()
-        for cat in pivot_df.columns:
+        
+        num_colors = len(color_palette)
+        for i, cat in enumerate(pivot_df.columns):
             y_data = pivot_df[cat]
+            color = CUSTOM_COLOR_MAP.get(str(cat), color_palette[i % num_colors])
             fig.add_trace(go.Bar(
                 x=pivot_df.index,
                 y=y_data,
                 name=str(cat),
+                marker_color=color,
                 text=[f"{int(val):,}" if pd.notnull(val) and val > 0 else "" for val in y_data],
                 textposition='auto'
             ))
@@ -231,15 +279,55 @@ def process_and_render_chart(df, x_axis, legend_axis, y_axis, chart_type, chart_
         fig.update_xaxes(type='category')
         return fig, grouped_df
 
+    elif chart_type == "圓餅圖 (Pie)":
+        # 🎯 圓餅圖專屬處理：依數值從大到小排序，確保從 12 點鐘方向順時針依比例排列
+        pie_df = grouped_df.sort_values(by=y_metric, ascending=False)
+        
+        fig = px.pie(
+            pie_df, 
+            names=x_axis, 
+            values=y_metric,
+            color=x_axis,
+            color_discrete_map=CUSTOM_COLOR_MAP,
+            color_discrete_sequence=color_palette,
+            category_orders={x_axis: pie_df[x_axis].tolist()}
+        )
+        
+        # 設定順時針排列與起始角度
+        fig.update_traces(
+            sort=False,            # 停用預設內部自動排序，採用傳入的排序
+            direction='clockwise', # 順時針方向排列
+            rotation=0             # 0度從正上方 (12 點鐘方向) 開始
+        )
+
+        fig.update_layout(
+            font=dict(family="Microsoft JhengHei", size=12),
+            height=chart_height, margin=dict(l=10, r=10, t=30, b=10)
+        )
+        return fig, pie_df
+
     else:
         if chart_type == "堆疊直條圖 (Stacked)":
-            fig = px.bar(grouped_df, x=x_axis, y=y_metric, color=color_col, barmode="stack", text_auto=True)
+            fig = px.bar(
+                grouped_df, x=x_axis, y=y_metric, color=color_col, barmode="stack", text_auto=True,
+                color_discrete_map=CUSTOM_COLOR_MAP,
+                color_discrete_sequence=color_palette,
+                category_orders=cat_orders
+            )
         elif chart_type == "折線圖 (Line)":
-            fig = px.line(grouped_df, x=x_axis, y=y_metric, color=color_col, markers=True)
-        elif chart_type == "圓餅圖 (Pie)":
-            fig = px.pie(grouped_df, names=x_axis, values=y_metric)
+            fig = px.line(
+                grouped_df, x=x_axis, y=y_metric, color=color_col, markers=True,
+                color_discrete_map=CUSTOM_COLOR_MAP,
+                color_discrete_sequence=color_palette,
+                category_orders=cat_orders
+            )
         else:
-            fig = px.bar(grouped_df, x=x_axis, y=y_metric, color=color_col, text_auto=True)
+            fig = px.bar(
+                grouped_df, x=x_axis, y=y_metric, color=color_col, text_auto=True,
+                color_discrete_map=CUSTOM_COLOR_MAP,
+                color_discrete_sequence=color_palette,
+                category_orders=cat_orders
+            )
 
         fig.update_layout(
             font=dict(family="Microsoft JhengHei", size=12),
@@ -248,7 +336,6 @@ def process_and_render_chart(df, x_axis, legend_axis, y_axis, chart_type, chart_
         )
         fig.update_xaxes(type='category')
         return fig, grouped_df
-
 # ---------------------------------------------------------
 # 5. 主頁面切換：Overall View VS 多視角分析
 # ---------------------------------------------------------
@@ -268,7 +355,6 @@ elif app_mode == "🖥️ Overall View (總覽看板)":
     else:
         file_path = os.path.join(UPLOAD_DIR, selected_filename)
         
-        # 每行排列 2 個常用圖表
         cols_per_row = 2
         fav_items = st.session_state.fav_list
         
@@ -304,9 +390,9 @@ else:
     st.title("📊 客訴 List 多視角分析儀表板")
     file_path = os.path.join(UPLOAD_DIR, selected_filename)
 
-    # 🎯 定義儲存格欄位索引 (0-indexed: C=2, D=3, E=4, G=6, I=8, J=9, K=10, L=11, M=12)
-    X_COL_INDICES = [2, 3, 4, 6, 8]                   # C2, D2, E2, G2, I2
-    LEGEND_COL_INDICES = [2, 3, 6, 9, 10, 11, 12]      # C2, D2, G2, J2, K2, L2, M2
+    # 🎯 指定的的 X 軸與圖例目標欄位名稱清單
+    TARGET_X_COLS = ["代理商", "客戶", "產品概述", "Month", "Lot no.", "產品別", "責任歸屬", "責任歸屬1", "問題分類"]
+    TARGET_LEGEND_COLS = ["代理商", "客戶", "Month", "產品別", "責任歸屬", "責任歸屬1", "問題分類"]
 
     try:
         with pd.ExcelFile(file_path) as xls:
@@ -328,11 +414,15 @@ else:
                     
                     actual_cols = df.columns.tolist()
                     
-                    # 🎯 自動從實際 Excel 欄位中提取對應 C2, D2, E2, G2, I2 的欄位標題文字
-                    x_opts = [actual_cols[i] for i in X_COL_INDICES if i < len(actual_cols)]
-                    
-                    # 🎯 自動從實際 Excel 欄位中提取對應 C2, D2, G2, J2, K2, L2, M2 的欄位標題文字
-                    legend_raw_opts = [actual_cols[i] for i in LEGEND_COL_INDICES if i < len(actual_cols)]
+                    # 🎯 只保留 Excel 中實際存在的指定欄位 (兼具安全性與彈性)
+                    x_opts = [col for col in TARGET_X_COLS if col in actual_cols]
+                    if not x_opts:  # 若無名稱完全相符，預設顯示指定的目標清單
+                        x_opts = TARGET_X_COLS
+
+                    legend_raw_opts = [col for col in TARGET_LEGEND_COLS if col in actual_cols]
+                    if not legend_raw_opts:
+                        legend_raw_opts = TARGET_LEGEND_COLS
+                        
                     legend_opts = ["無"] + list(dict.fromkeys(legend_raw_opts))
 
                     if x_opts:
@@ -342,7 +432,11 @@ else:
 
                         x_axis = st.selectbox("X 軸（主要類別）", options=x_opts, key=x_key)
                         
-                        unique_x_vals = df[x_axis].dropna().unique().tolist()
+                        if x_axis in df.columns:
+                            unique_x_vals = df[x_axis].dropna().unique().tolist()
+                        else:
+                            unique_x_vals = []
+
                         filter_key = f"x_filter_{idx}"
                         
                         if filter_key not in st.session_state:
@@ -351,7 +445,11 @@ else:
                             st.session_state[filter_key] = [v for v in st.session_state[filter_key] if v in unique_x_vals]
 
                         selected_x_vals = st.multiselect(f"🔍 選擇 X 軸顯示範圍：", options=unique_x_vals, key=filter_key)
-                        df_filtered = df[df[x_axis].isin(selected_x_vals)]
+                        
+                        if x_axis in df.columns:
+                            df_filtered = df[df[x_axis].isin(selected_x_vals)]
+                        else:
+                            df_filtered = pd.DataFrame()
                         
                         leg_key = f"leg_{idx}"
                         if leg_key in st.session_state and st.session_state[leg_key] not in legend_opts:

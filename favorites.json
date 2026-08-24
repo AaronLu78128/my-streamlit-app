@@ -15,5 +15,38 @@
         "legend_axis": "無",
         "y_axis": "資料筆數",
         "chart_type": "堆疊直條圖 (Stacked)"
+    },
+    {
+        "name": "責任歸屬1-資料筆數",
+        "file": "CP 測試項目 _ 客訴list(Bryce)test_version.xlsx",
+        "sheet": "客退 list",
+        "x_axis": "責任歸屬1",
+        "selected_x_vals": [
+            "IST",
+            "Cust."
+        ],
+        "legend_axis": "無",
+        "y_axis": "資料筆數",
+        "chart_type": "圓餅圖 (Pie)"
+    },
+    {
+        "name": "問題分類-資料筆數",
+        "file": "CP 測試項目 _ 客訴list(Bryce)test_version.xlsx",
+        "sheet": "客退 list",
+        "x_axis": "問題分類",
+        "selected_x_vals": [
+            "溫校異常",
+            "EOS/ESD",
+            "系統應用",
+            "測試coverage",
+            "供應商",
+            "Design problem",
+            "Sample 受損",
+            "組裝製程_(壓合、燒錄等)",
+            "其他"
+        ],
+        "legend_axis": "無",
+        "y_axis": "資料筆數",
+        "chart_type": "圓餅圖 (Pie)"
     }
 ]
