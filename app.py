@@ -391,7 +391,7 @@ else:
     file_path = os.path.join(UPLOAD_DIR, selected_filename)
 
     # 🎯 指定的的 X 軸與圖例目標欄位名稱清單
-    TARGET_X_COLS = ["代理商", "客戶", "產品概述", "Month", "Lot no.", "產品別", "責任歸屬", "責任歸屬1", "問題分類"]
+    TARGET_X_COLS = ["代理商", "客戶", "產品概述", "Month", "責任歸屬1", "問題分類"]
     TARGET_LEGEND_COLS = ["代理商", "客戶", "Month", "產品別", "責任歸屬", "責任歸屬1", "問題分類"]
 
     try:
