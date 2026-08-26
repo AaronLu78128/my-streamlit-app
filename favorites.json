@@ -1,6 +1,6 @@
 [
     {
-        "name": "Month-資料筆數",
+        "name": "Month-不良數量",
         "file": "CP 測試項目 _ 客訴list(Bryce)test_version.xlsx",
         "sheet": "客退 list",
         "x_axis": "Month",
@@ -13,8 +13,9 @@
             6
         ],
         "legend_axis": "無",
-        "y_axis": "資料筆數",
-        "chart_type": "堆疊直條圖 (Stacked)"
+        "y_axis": "不良數量",
+        "chart_type": "聚集直條圖 (Grouped)",
+        "note": "2026上半年，當月的不良數量(PCS)如圖所示"
     },
     {
         "name": "責任歸屬1-資料筆數",
@@ -27,6 +28,52 @@
         ],
         "legend_axis": "無",
         "y_axis": "資料筆數",
-        "chart_type": "圓餅圖 (Pie)"
+        "chart_type": "圓餅圖 (Pie)",
+        "note": "2026上半年來的客訴中，屬\"客戶責任\"的比例佔比較大.....\n"
+    },
+    {
+        "name": "Month-資料筆數(責任歸屬1)",
+        "file": "CP 測試項目 _ 客訴list(Bryce)test_version.xlsx",
+        "sheet": "客退 list",
+        "x_axis": "Month",
+        "selected_x_vals": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+        ],
+        "legend_axis": "責任歸屬1",
+        "y_axis": "資料筆數",
+        "chart_type": "堆疊直條圖 (Stacked)",
+        "note": "屬於\"公司責任\"的客訴分別有出現在:1月 3月 4月 6月\n"
+    },
+    {
+        "name": "客戶-資料筆數(責任歸屬1)",
+        "file": "CP 測試項目 _ 客訴list(Bryce)test_version.xlsx",
+        "sheet": "客退 list",
+        "x_axis": "客戶",
+        "selected_x_vals": [
+            "清越",
+            "晶訊",
+            "興泰",
+            "信利",
+            "三杰",
+            "DKE",
+            "BOE",
+            "NVD",
+            "麒麟",
+            "秋田微",
+            "超聲",
+            "康恵",
+            "天山",
+            "EINK",
+            "希恩凱"
+        ],
+        "legend_axis": "責任歸屬1",
+        "y_axis": "資料筆數",
+        "chart_type": "堆疊直條圖 (Stacked)",
+        "note": "屬於\"公司責任\"的客訴中，對應的客戶有 : BOE DKE NVD 清越 興泰"
     }
 ]
