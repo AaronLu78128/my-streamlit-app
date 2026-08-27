@@ -32,24 +32,6 @@
         "note": "2026上半年來的客訴中，屬\"客戶責任\"的比例佔比較大.....\n"
     },
     {
-        "name": "Month-資料筆數(責任歸屬1)",
-        "file": "CP 測試項目 _ 客訴list(Bryce)test_version.xlsx",
-        "sheet": "客退 list",
-        "x_axis": "Month",
-        "selected_x_vals": [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6
-        ],
-        "legend_axis": "責任歸屬1",
-        "y_axis": "資料筆數",
-        "chart_type": "堆疊直條圖 (Stacked)",
-        "note": "屬於\"公司責任\"的客訴分別有出現在:1月 3月 4月 6月\n"
-    },
-    {
         "name": "客戶-資料筆數(責任歸屬1)",
         "file": "CP 測試項目 _ 客訴list(Bryce)test_version.xlsx",
         "sheet": "客退 list",

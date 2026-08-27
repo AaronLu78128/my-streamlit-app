@@ -460,8 +460,6 @@ else:
 
     # --- 模式 A：🖥️ Overall View (總覽看板) ---
     elif app_mode == "🖥️ Overall View (總覽看板)":
-        # --- 🖥️ Overall View (總覽看板) 頂部跑馬燈 ---
-
         st.title("🖥️ Overall View ")
         st.caption(f"📌 當前分析檔案：`{selected_filename}`")
         
@@ -484,44 +482,64 @@ else:
                             try:
                                 df, _, _ = load_and_clean_excel(file_path, fav['sheet'])
                                 
-                                if fav['x_axis'] in df.columns:
-                                    df_filtered = df[df[fav['x_axis']].isin(fav['selected_x_vals'])]
-                                    
-                                    fig, _ = process_and_render_chart(
-                                        df_filtered, 
-                                        fav['x_axis'], 
-                                        fav['legend_axis'], 
-                                        fav['y_axis'], 
-                                        fav['chart_type'],
-                                        chart_height=350
+                                x_axis_raw = fav.get("x_axis", "")
+                                # 取得組合欄位中的各個子欄位
+                                x_cols = [c.strip() for c in x_axis_raw.split(" / ")]
+                                valid_x_cols = [c for c in x_cols if c in df.columns]
+
+                                if valid_x_cols:
+                                    df_filtered = df.copy()
+
+                                    # 1. 動態建立組合 X 軸欄位 (若為單一欄位也會妥善處理)
+                                    df_filtered[x_axis_raw] = (
+                                        df_filtered[valid_x_cols]
+                                        .fillna("")
+                                        .astype(str)
+                                        .apply(lambda row: " / ".join([str(item) for item in row]), axis=1)
                                     )
-                                    # 1. 渲染圖表
-                                    st.plotly_chart(fig, use_container_width=True)
-                                    
-                                    # 2. 📝 新增：圖片說明 / 報告備註輸入框
-                                    note_key = f"overall_note_{idx}_{fav['name']}"
-                                    
-                                    # 取出原本儲存的說明（若無則為空字串）
-                                    initial_note = fav.get("note", st.session_state.get(note_key, ""))
-                                    
-                                    note_text = st.text_area(
-                                        label="📝 圖片說明",
-                                        value=initial_note,
-                                        placeholder="請在此輸入...",
-                                        key=note_key,
-                                        height=90
-                                    )
-                                    
-                                    # 即時更新回 session_state 的常用字典中，避免切換頁面後文字遺失
-                                    if st.session_state.fav_list[idx].get("note") != note_text:
-                                        st.session_state.fav_list[idx]["note"] = note_text
-                                        save_favorites(st.session_state.fav_list) # 同步儲存至檔案
-                                    
+
+                                    # 2. 🎯 關鍵修復：將 selected_x_vals 與欄位內容皆「強制轉成字串」再比對，避免型態不匹配
+                                    selected_x_vals = [str(v) for v in fav.get('selected_x_vals', [])]
+                                    if selected_x_vals:
+                                        df_filtered = df_filtered[df_filtered[x_axis_raw].astype(str).isin(selected_x_vals)]
+
+                                    # 3. 繪製圖表
+                                    if not df_filtered.empty:
+                                        fig, _ = process_and_render_chart(
+                                            df_filtered, 
+                                            x_axis_raw, 
+                                            fav['legend_axis'], 
+                                            fav['y_axis'], 
+                                            fav['chart_type'],
+                                            chart_height=350
+                                        )
+                                        
+                                        # 渲染圖表
+                                        st.plotly_chart(fig, use_container_width=True)
+                                        
+                                        # 📝 圖片說明 / 報告備註輸入框
+                                        note_key = f"overall_note_{idx}_{fav['name']}"
+                                        initial_note = fav.get("note", st.session_state.get(note_key, ""))
+                                        
+                                        note_text = st.text_area(
+                                            label="📝 圖片說明",
+                                            value=initial_note,
+                                            placeholder="請在此輸入...",
+                                            key=note_key,
+                                            height=90
+                                        )
+                                        
+                                        # 即時更新回 session_state 與檔案
+                                        if st.session_state.fav_list[idx].get("note") != note_text:
+                                            st.session_state.fav_list[idx]["note"] = note_text
+                                            save_favorites(st.session_state.fav_list)
+                                    else:
+                                        st.warning(f"⚠️ `{fav['name']}` 篩選後無數據，無法生成圖表。")
+
                                 else:
                                     st.error(f"欄位 `{fav['x_axis']}` 在目前的工作表中不存在。")
                             except Exception as e:
                                 st.error(f"無法載入圖表 `{fav['name']}`: {e}")
-
     # --- 模式 B：📊 多視角分析儀表板 ---
     else:
         st.title("📊 Data Analysis")
@@ -550,15 +568,14 @@ else:
                 chart_col, filter_col = st.columns([7, 3])
 
                 with filter_col:
-                    st.markdown("### 欄位篩選器")
+                    st.markdown("### 🌪️ 欄位篩選器")
 
                     df_filtered = df.copy()
-                    active_x_cols = []  # 記錄哪些欄位有被使用者勾選內容
+                    active_x_cols = []  # 記錄哪些欄位有被使用者選取
 
-                    # 遍歷欄位，有選取內容的欄位會自動變成 X 軸維度
+                    # 1. 先記錄所有選取的欄位與進行資料篩選
                     for col_name in FILTER_X_COLS:
                         if col_name in actual_cols:
-                            # 動態取得當前資料中非空的選項 (支援連動過濾)
                             avail_opts = sorted([str(v) for v in df_filtered[col_name].dropna().unique().tolist() if str(v).strip() != ""])
                             f_key = f"filter_{col_name}_{idx}"
                             
@@ -568,28 +585,29 @@ else:
                                 key=f_key
                             )
                             
-                            # 💡 若該欄位有選擇內容：1. 套用資料過濾  2. 加入 X 軸組合陣列
                             if selected_vals:
                                 df_filtered = df_filtered[df_filtered[col_name].astype(str).isin(selected_vals)]
                                 active_x_cols.append(col_name)
 
                     st.markdown("---")
-                    st.markdown("### 其他圖表設定")
+                    st.markdown("### 🎨 其他圖表設定")
 
-                    # 💡 自動組合 X 軸
+                    # 2. 自動生成組合 X 軸
                     if active_x_cols:
                         x_axis = " / ".join(active_x_cols)
                         
-                        
-                        # 安全組合字串，防止 float/NaN 錯誤
+                        # 組合字串，防止 NaN/float 格式化錯誤
                         df_filtered[x_axis] = (
                             df_filtered[active_x_cols]
                             .fillna("")
                             .astype(str)
                             .apply(lambda row: " / ".join([str(item) for item in row]), axis=1)
                         )
+                        # 取得當前篩選出來的組合 X 軸所有可見選項
+                        current_selected_x_vals = sorted(df_filtered[x_axis].dropna().unique().tolist())
                     else:
                         x_axis = ""
+                        current_selected_x_vals = []
 
                     legend_raw_opts = [col for col in TARGET_LEGEND_COLS if col in actual_cols] or TARGET_LEGEND_COLS
                     legend_opts = ["無"] + list(dict.fromkeys(legend_raw_opts))
@@ -625,6 +643,7 @@ else:
                                         "file": selected_filename,
                                         "sheet": chosen_sheet,
                                         "x_axis": x_axis,
+                                        "selected_x_vals": current_selected_x_vals,
                                         "legend_axis": legend_axis,
                                         "y_axis": y_axis,
                                         "chart_type": chart_type
@@ -638,7 +657,7 @@ else:
                         with st.expander("🔍 查看統計數據明細"):
                             st.dataframe(grouped_df, use_container_width=True)
                     else:
-                        st.info("請在右側面板的篩選器中**勾選至少一個欄位的內容**")
+                        st.info("👈 請在右側面板的欄位篩選器中**勾選至少一個欄位的內容**來自動生成 X 軸與圖表。")
 
                 st.markdown("---")
 
