@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import colorsys
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import os
@@ -290,7 +292,44 @@ else:
 
             return df, sheet_names, sheet_name
 
-    def process_and_render_chart(df, x_axis, legend_axis, y_axis, chart_type, chart_height=380):
+    def get_weight_based_colors(categories, values):
+        """根據數據比重 (values) 動態生成顏色對照表：
+
+        - 色相 (Hue)：將 360 度均勻切分，確保各項目顏色不重複 - 飽和度 & 亮度：比重越大越鮮豔深濃，比重越小越淡/亮
+        """
+        num_items = len(categories)
+        val_arr = np.array(values, dtype=float)
+
+        val_min = val_arr.min() if len(val_arr) > 0 else 0
+        val_max = val_arr.max() if len(val_arr) > 0 else 1
+        val_range = val_max - val_min if val_max != val_min else 1
+
+        color_map = {}
+
+        for i, (cat, val) in enumerate(zip(categories, values)):
+            # 1. 色相：均勻間隔旋轉，保證不重複
+            hue = (i * (360 / max(num_items, 1))) / 360.0
+
+            # 2. 計算比重相對權重 (0.0 ~ 1.0)
+            norm_weight = (val - val_min) / val_range
+
+            # 3. 比重大 -> 高飽和度 (0.85)，比重小 -> 低飽和度/淡色 (0.35)
+            saturation = 0.35 + (norm_weight * 0.50)
+
+            # 4. 比重大 -> 顏色較濃深 (Lightness 0.45)，比重小 -> 顏色較明亮 (Lightness 0.75)
+            lightness = 0.75 - (norm_weight * 0.30)
+
+            # HLS 轉 RGB 並轉 HEX 格式
+            r, g, b = colorsys.hls_to_rgb(hue, lightness, saturation)
+            hex_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+            color_map[str(cat)] = hex_color
+
+        return color_map
+
+
+    def process_and_render_chart(
+        df, x_axis, legend_axis, y_axis, chart_type, chart_height=380
+    ):
         calc_df = df.copy()
         calc_df[x_axis] = calc_df[x_axis].astype(str)
         color_col = None if legend_axis == "無" else legend_axis
@@ -301,153 +340,192 @@ else:
         exact_defect_col = "不良數量" if "不良數量" in calc_df.columns else None
 
         if y_axis == "不良數量" and exact_defect_col:
-            calc_df[exact_defect_col] = pd.to_numeric(
-                calc_df[exact_defect_col].astype(str).str.extract(r'(\d+)')[0], 
-                errors='coerce'
-            ).fillna(0)
+            calc_df[exact_defect_col] = (
+                pd.to_numeric(
+                    calc_df[exact_defect_col].astype(str).str.extract(r"(\d+)")[0],
+                    errors="coerce",
+                )
+                .fillna(0)
+            )
             target_col = exact_defect_col
             y_metric = "不良數量 (總和)"
         else:
             target_col = None
             y_metric = "資料筆數"
 
+        # 資料聚合
         if target_col:
             if color_col and x_axis != color_col:
-                grouped_df = calc_df.groupby([x_axis, color_col], as_index=False)[target_col].sum()
+                grouped_df = calc_df.groupby(
+                    [x_axis, color_col], as_index=False, observed=False
+                )[target_col].sum()
                 grouped_df.rename(columns={target_col: y_metric}, inplace=True)
             else:
-                grouped_df = calc_df.groupby([x_axis], as_index=False)[target_col].sum()
+                grouped_df = calc_df.groupby(
+                    [x_axis], as_index=False, observed=False
+                )[target_col].sum()
                 grouped_df.rename(columns={target_col: y_metric}, inplace=True)
-                color_col = None
+                color_col = x_axis
         else:
             if color_col and x_axis != color_col:
-                grouped_df = calc_df.groupby([x_axis, color_col], as_index=False).size().rename(columns={"size": y_metric})
+                grouped_df = (
+                    calc_df.groupby([x_axis, color_col], as_index=False, observed=False)
+                    .size()
+                    .rename(columns={"size": y_metric})
+                )
             else:
-                grouped_df = calc_df.groupby([x_axis], as_index=False).size().rename(columns={"size": y_metric})
-                color_col = None
-
-        # 🎨 定義圖中對應的專屬顏色對照表
-        CUSTOM_COLOR_MAP = {
-            "EOS/ESD": "#0066CC",                   # 深藍
-            "溫校異常": "#66C2FF",                 # 天藍
-            "系統應用": "#FF1A3C",                 # 鮮紅
-            "供應商": "#FFA8B6",                   # 粉紅
-            "Sample 受損": "#00B386",             # 綠/青綠
-            "Design problem": "#66E6A3",          # 淺綠
-            "其他": "#FF8033",                     # 橘色
-            "測試coverage": "#FFC658",             # 黃色
-            "組裝製程_(壓合、燒錄等)": "#6A3AAD"      # 紫色
-        }
-
-        # 預設備用通用調色盤
-        color_palette = [
-            "#0066CC", "#66C2FF", "#FF1A3C", "#FFA8B6", 
-            "#00B386", "#66E6A3", "#FF8033", "#FFC658", "#6A3AAD"
-        ]
+                grouped_df = (
+                    calc_df.groupby([x_axis], as_index=False, observed=False)
+                    .size()
+                    .rename(columns={"size": y_metric})
+                )
+                color_col = x_axis
 
         # 🎯 針對直條圖/折線圖進行數字優先的正向排序
         def extract_num(series):
-            extracted = series.astype(str).str.extract(r'(\d+)')[0]
-            return pd.to_numeric(extracted, errors='coerce')
+            extracted = series.astype(str).str.extract(r"(\d+)")[0]
+            return pd.to_numeric(extracted, errors="coerce")
 
         sort_cols = [x_axis]
-        if color_col:
+        if color_col and color_col != x_axis:
             sort_cols.append(color_col)
-        
-        grouped_df.sort_values(
-            by=sort_cols, 
-            key=extract_num,
-            inplace=True
-        )
+
+        grouped_df.sort_values(by=sort_cols, key=extract_num, inplace=True)
 
         # 建立類別順序字典
         cat_orders = {}
         if x_axis in grouped_df.columns:
-            cat_orders[x_axis] = sorted(grouped_df[x_axis].unique(), key=lambda v: pd.to_numeric(''.join(filter(str.isdigit, str(v))), errors='coerce') if any(c.isdigit() for c in str(v)) else v)
-        if color_col and color_col in grouped_df.columns:
-            cat_orders[color_col] = sorted(grouped_df[color_col].unique(), key=lambda v: pd.to_numeric(''.join(filter(str.isdigit, str(v))), errors='coerce') if any(c.isdigit() for c in str(v)) else v)
-
-        if chart_type == "聚集直條圖 (Grouped)" and color_col:
-            pivot_df = grouped_df.pivot(index=x_axis, columns=color_col, values=y_metric)
-            fig = go.Figure()
-            
-            num_colors = len(color_palette)
-            for i, cat in enumerate(pivot_df.columns):
-                y_data = pivot_df[cat]
-                color = CUSTOM_COLOR_MAP.get(str(cat), color_palette[i % num_colors])
-                fig.add_trace(go.Bar(
-                    x=pivot_df.index,
-                    y=y_data,
-                    name=str(cat),
-                    marker_color=color,
-                    text=[f"{int(val):,}" if pd.notnull(val) and val > 0 else "" for val in y_data],
-                    textposition='auto'
-                ))
-            fig.update_layout(
-                barmode='group', bargap=0.2, bargroupgap=0.03,
-                font=dict(family="Microsoft JhengHei", size=12),
-                height=chart_height, margin=dict(l=10, r=10, t=30, b=10),
-                xaxis_title=x_axis, yaxis_title=y_metric, legend_title=color_col
+            cat_orders[x_axis] = sorted(
+                grouped_df[x_axis].unique(),
+                key=lambda v: pd.to_numeric(
+                    "".join(filter(str.isdigit, str(v))), errors="coerce"
+                )
+                if any(c.isdigit() for c in str(v))
+                else v,
             )
-            fig.update_xaxes(type='category')
+        if color_col and color_col in grouped_df.columns:
+            cat_orders[color_col] = sorted(
+                grouped_df[color_col].unique(),
+                key=lambda v: pd.to_numeric(
+                    "".join(filter(str.isdigit, str(v))), errors="coerce"
+                )
+                if any(c.isdigit() for c in str(v))
+                else v,
+            )
+
+        # 🎨 系統動態自動計算配色（依據數據比重總和調整飽和度與亮度）
+        color_target_col = color_col if color_col else x_axis
+        weight_summary = (
+            grouped_df.groupby(color_target_col)[y_metric]
+            .sum()
+            .sort_values(ascending=False)
+        )
+
+        DYNAMIC_COLOR_MAP = get_weight_based_colors(
+            weight_summary.index.tolist(), weight_summary.values.tolist()
+        )
+
+        display_legend_title = color_col if legend_axis != "無" else ""
+
+        if chart_type == "聚集直條圖 (Grouped)" and legend_axis != "無":
+            pivot_df = grouped_df.pivot(
+                index=x_axis, columns=color_col, values=y_metric
+            )
+            fig = go.Figure()
+
+            for cat in pivot_df.columns:
+                y_data = pivot_df[cat]
+                color = DYNAMIC_COLOR_MAP.get(str(cat), "#3B82F6")
+                fig.add_trace(
+                    go.Bar(
+                        x=pivot_df.index,
+                        y=y_data,
+                        name=str(cat),
+                        marker_color=color,
+                        text=[
+                            f"{int(val):,}" if pd.notnull(val) and val > 0 else ""
+                            for val in y_data
+                        ],
+                        textposition="auto",
+                    )
+                )
+            fig.update_layout(
+                barmode="group",
+                bargap=0.2,
+                bargroupgap=0.03,
+                font=dict(family="Microsoft JhengHei", size=12),
+                height=chart_height,
+                margin=dict(l=10, r=10, t=30, b=10),
+                xaxis_title=x_axis,
+                yaxis_title=y_metric,
+                legend_title=display_legend_title,
+            )
+            fig.update_xaxes(type="category")
             return fig, grouped_df
 
         elif chart_type == "圓餅圖 (Pie)":
-            # 🎯 圓餅圖專屬處理：依數值從大到小排序，確保從 12 點鐘方向順時針依比例排列
             pie_df = grouped_df.sort_values(by=y_metric, ascending=False)
-            
+
             fig = px.pie(
-                pie_df, 
-                names=x_axis, 
+                pie_df,
+                names=x_axis,
                 values=y_metric,
                 color=x_axis,
-                color_discrete_map=CUSTOM_COLOR_MAP,
-                color_discrete_sequence=color_palette,
-                category_orders={x_axis: pie_df[x_axis].tolist()}
+                color_discrete_map=DYNAMIC_COLOR_MAP,
+                category_orders={x_axis: pie_df[x_axis].tolist()},
             )
-            
-            # 設定順時針排列與起始角度
-            fig.update_traces(
-                sort=False,            # 停用預設內部自動排序，採用傳入的排序
-                direction='clockwise', # 順時針方向排列
-                rotation=0             # 0度從正上方 (12 點鐘方向) 開始
-            )
+
+            fig.update_traces(sort=False, direction="clockwise", rotation=0)
 
             fig.update_layout(
                 font=dict(family="Microsoft JhengHei", size=12),
-                height=chart_height, margin=dict(l=10, r=10, t=30, b=10)
+                height=chart_height,
+                margin=dict(l=10, r=10, t=30, b=10),
             )
             return fig, pie_df
 
         else:
             if chart_type == "堆疊直條圖 (Stacked)":
                 fig = px.bar(
-                    grouped_df, x=x_axis, y=y_metric, color=color_col, barmode="stack", text_auto=True,
-                    color_discrete_map=CUSTOM_COLOR_MAP,
-                    color_discrete_sequence=color_palette,
-                    category_orders=cat_orders
+                    grouped_df,
+                    x=x_axis,
+                    y=y_metric,
+                    color=color_col,
+                    barmode="stack",
+                    text_auto=True,
+                    color_discrete_map=DYNAMIC_COLOR_MAP,
+                    category_orders=cat_orders,
                 )
             elif chart_type == "折線圖 (Line)":
                 fig = px.line(
-                    grouped_df, x=x_axis, y=y_metric, color=color_col, markers=True,
-                    color_discrete_map=CUSTOM_COLOR_MAP,
-                    color_discrete_sequence=color_palette,
-                    category_orders=cat_orders
+                    grouped_df,
+                    x=x_axis,
+                    y=y_metric,
+                    color=color_col,
+                    markers=True,
+                    color_discrete_map=DYNAMIC_COLOR_MAP,
+                    category_orders=cat_orders,
                 )
             else:
                 fig = px.bar(
-                    grouped_df, x=x_axis, y=y_metric, color=color_col, text_auto=True,
-                    color_discrete_map=CUSTOM_COLOR_MAP,
-                    color_discrete_sequence=color_palette,
-                    category_orders=cat_orders
+                    grouped_df,
+                    x=x_axis,
+                    y=y_metric,
+                    color=color_col,
+                    text_auto=True,
+                    color_discrete_map=DYNAMIC_COLOR_MAP,
+                    category_orders=cat_orders,
                 )
 
             fig.update_layout(
                 font=dict(family="Microsoft JhengHei", size=12),
-                height=chart_height, margin=dict(l=10, r=10, t=30, b=10),
-                xaxis_title=x_axis, yaxis_title=y_metric, legend_title=color_col if color_col else ""
+                height=chart_height,
+                margin=dict(l=10, r=10, t=30, b=10),
+                xaxis_title=x_axis,
+                yaxis_title=y_metric,
+                legend_title=display_legend_title,
             )
-            fig.update_xaxes(type='category')
+            fig.update_xaxes(type="category")
             return fig, grouped_df
     # ---------------------------------------------------------
     # 5. 主頁面切換：Overall View VS 多視角分析
@@ -545,7 +623,6 @@ else:
         st.title("📊 Data Analysis")
         file_path = os.path.join(UPLOAD_DIR, selected_filename)
 
-        # 🎯 可供篩選與作為 X 軸組合的欄位清單
         FILTER_X_COLS = ["Month", "代理商", "客戶", "產品概述", "責任歸屬1", "問題分類"]
         TARGET_LEGEND_COLS = ["代理商", "客戶", "Month", "產品別", "責任歸屬", "責任歸屬1", "問題分類"]
 
@@ -568,21 +645,40 @@ else:
                 chart_col, filter_col = st.columns([7, 3])
 
                 with filter_col:
-                    st.markdown("### 🌪️ 欄位篩選器")
+                    st.markdown("### X軸(欄位篩選器)")
 
                     df_filtered = df.copy()
                     active_x_cols = []  # 記錄哪些欄位有被使用者選取
 
-                    # 1. 先記錄所有選取的欄位與進行資料篩選
+                    # 1. 進行欄位篩選與狀態保持 (避免頁面切換被 Streamlit 自動清空)
                     for col_name in FILTER_X_COLS:
                         if col_name in actual_cols:
-                            avail_opts = sorted([str(v) for v in df_filtered[col_name].dropna().unique().tolist() if str(v).strip() != ""])
-                            f_key = f"filter_{col_name}_{idx}"
+                            avail_opts = sorted([str(v) for v in df[col_name].dropna().unique().tolist() if str(v).strip() != ""])
                             
+                            # 🔑 用於真正持久儲存的變數名稱
+                            saved_state_key = f"saved_filter_{col_name}_{idx}"
+                            # 🔑 multiselect 暫存使用名稱
+                            widget_key = f"widget_filter_{col_name}_{idx}"
+
+                            # 初始化持久狀態
+                            if saved_state_key not in st.session_state:
+                                st.session_state[saved_state_key] = []
+
+                            # 校正：剔除不在目前選項內的無效值
+                            st.session_state[saved_state_key] = [
+                                v for v in st.session_state[saved_state_key] if v in avail_opts
+                            ]
+
+                            # 定義 callback：當使用者操作元件時，同步寫回持久狀態
+                            def update_filter(s_key=saved_state_key, w_key=widget_key):
+                                st.session_state[s_key] = st.session_state[w_key]
+
                             selected_vals = st.multiselect(
                                 f"📌 {col_name}", 
-                                options=avail_opts, 
-                                key=f_key
+                                options=avail_opts,
+                                default=st.session_state[saved_state_key], # 從持久狀態讀取預設值
+                                key=widget_key,
+                                on_change=update_filter # 異動時即時寫回
                             )
                             
                             if selected_vals:
@@ -590,20 +686,18 @@ else:
                                 active_x_cols.append(col_name)
 
                     st.markdown("---")
-                    st.markdown("### 🎨 其他圖表設定")
+                    st.markdown("### 其他圖表設定")
 
                     # 2. 自動生成組合 X 軸
                     if active_x_cols:
                         x_axis = " / ".join(active_x_cols)
                         
-                        # 組合字串，防止 NaN/float 格式化錯誤
                         df_filtered[x_axis] = (
                             df_filtered[active_x_cols]
                             .fillna("")
                             .astype(str)
                             .apply(lambda row: " / ".join([str(item) for item in row]), axis=1)
                         )
-                        # 取得當前篩選出來的組合 X 軸所有可見選項
                         current_selected_x_vals = sorted(df_filtered[x_axis].dropna().unique().tolist())
                     else:
                         x_axis = ""
@@ -646,7 +740,8 @@ else:
                                         "selected_x_vals": current_selected_x_vals,
                                         "legend_axis": legend_axis,
                                         "y_axis": y_axis,
-                                        "chart_type": chart_type
+                                        "chart_type": chart_type,
+                                        "note": ""
                                     }
                                     st.session_state.fav_list = [f for f in st.session_state.fav_list if f["name"] != fav_title.strip()]
                                     st.session_state.fav_list.append(new_fav)
@@ -657,7 +752,7 @@ else:
                         with st.expander("🔍 查看統計數據明細"):
                             st.dataframe(grouped_df, use_container_width=True)
                     else:
-                        st.info("👈 請在右側面板的欄位篩選器中**勾選至少一個欄位的內容**來自動生成 X 軸與圖表。")
+                        st.info("請在右側面板的欄位篩選器中**勾選至少一個欄位的內容**來生成圖表。")
 
                 st.markdown("---")
 
