@@ -524,129 +524,123 @@ else:
 
     # --- 模式 B：📊 多視角分析儀表板 ---
     else:
-        st.title("📊 Data Analysis ")
+        st.title("📊 Data Analysis")
         file_path = os.path.join(UPLOAD_DIR, selected_filename)
 
-        # 🎯 指定的的 X 軸與圖例目標欄位名稱清單
-        TARGET_X_COLS = ["代理商", "客戶", "產品概述", "Month", "責任歸屬1", "問題分類"]
+        # 🎯 可供篩選與作為 X 軸組合的欄位清單
+        FILTER_X_COLS = ["Month", "代理商", "客戶", "產品概述", "責任歸屬1", "問題分類"]
         TARGET_LEGEND_COLS = ["代理商", "客戶", "Month", "產品別", "責任歸屬", "責任歸屬1", "問題分類"]
 
         try:
             with pd.ExcelFile(file_path) as xls:
                 sheet_names = xls.sheet_names
 
-            cols = st.columns(num_charts)
-
             for idx in range(num_charts):
-                with cols[idx]:
-                    st.subheader(f"圖表視角 {idx+1}")
-                    
-                    with st.expander(f"⚙️ 設定視角 {idx+1} 參數", expanded=True):
-                        sheet_key = f"sheet_{idx}"
-                        if sheet_key in st.session_state and st.session_state[sheet_key] not in sheet_names:
-                            st.session_state[sheet_key] = sheet_names[0]
+                st.subheader(f"圖表視角 {idx+1}")
+                
+                with st.expander(f"⚙️ 設定視角 {idx+1} 基本數據源", expanded=True):
+                    sheet_key = f"sheet_{idx}"
+                    if sheet_key in st.session_state and st.session_state[sheet_key] not in sheet_names:
+                        st.session_state[sheet_key] = sheet_names[0]
 
-                        chosen_sheet = st.selectbox("工作表 (Sheet)", options=sheet_names, key=sheet_key)
-                        df, _, _ = load_and_clean_excel(file_path, chosen_sheet)
-                        
-                        actual_cols = df.columns.tolist()
-                        
-                        # 🎯 只保留 Excel 中實際存在的指定欄位 (兼具安全性與彈性)
-                        x_opts = [col for col in TARGET_X_COLS if col in actual_cols]
-                        if not x_opts:  # 若無名稱完全相符，預設顯示指定的目標清單
-                            x_opts = TARGET_X_COLS
+                    chosen_sheet = st.selectbox("工作表 (Sheet)", options=sheet_names, key=sheet_key)
+                    df, _, _ = load_and_clean_excel(file_path, chosen_sheet)
+                    actual_cols = df.columns.tolist()
 
-                        legend_raw_opts = [col for col in TARGET_LEGEND_COLS if col in actual_cols]
-                        if not legend_raw_opts:
-                            legend_raw_opts = TARGET_LEGEND_COLS
+                chart_col, filter_col = st.columns([7, 3])
+
+                with filter_col:
+                    st.markdown("### 欄位篩選器")
+
+                    df_filtered = df.copy()
+                    active_x_cols = []  # 記錄哪些欄位有被使用者勾選內容
+
+                    # 遍歷欄位，有選取內容的欄位會自動變成 X 軸維度
+                    for col_name in FILTER_X_COLS:
+                        if col_name in actual_cols:
+                            # 動態取得當前資料中非空的選項 (支援連動過濾)
+                            avail_opts = sorted([str(v) for v in df_filtered[col_name].dropna().unique().tolist() if str(v).strip() != ""])
+                            f_key = f"filter_{col_name}_{idx}"
                             
-                        legend_opts = ["無"] + list(dict.fromkeys(legend_raw_opts))
-
-                        if x_opts:
-                            x_key = f"x_{idx}"
-                            if x_key in st.session_state and st.session_state[x_key] not in x_opts:
-                                st.session_state[x_key] = x_opts[0]
-
-                            x_axis = st.selectbox("X 軸（主要類別）", options=x_opts, key=x_key)
-                            
-                            if x_axis in df.columns:
-                                unique_x_vals = df[x_axis].dropna().unique().tolist()
-                            else:
-                                unique_x_vals = []
-
-                            filter_key = f"x_filter_{idx}"
-                            
-                            if filter_key not in st.session_state:
-                                st.session_state[filter_key] = unique_x_vals
-                            elif isinstance(st.session_state[filter_key], list):
-                                st.session_state[filter_key] = [v for v in st.session_state[filter_key] if v in unique_x_vals]
-
-                            selected_x_vals = st.multiselect(f"🔍 選擇 X 軸顯示範圍：", options=unique_x_vals, key=filter_key)
-                            
-                            if x_axis in df.columns:
-                                df_filtered = df[df[x_axis].isin(selected_x_vals)]
-                            else:
-                                df_filtered = pd.DataFrame()
-                            
-                            leg_key = f"leg_{idx}"
-                            if leg_key in st.session_state and st.session_state[leg_key] not in legend_opts:
-                                st.session_state[leg_key] = "無"
-
-                            legend_axis = st.selectbox("圖例（分類）", options=legend_opts, key=leg_key)
-                            
-                            y_opts = ["資料筆數", "不良數量"]
-                            y_key = f"y_{idx}"
-                            if y_key in st.session_state and st.session_state[y_key] not in y_opts:
-                                st.session_state[y_key] = "資料筆數"
-
-                            y_axis = st.selectbox("Y軸（統計欄位）", options=y_opts, key=y_key)
-                            
-                            chart_opts = ["聚集直條圖 (Grouped)", "堆疊直條圖 (Stacked)", "折線圖 (Line)", "圓餅圖 (Pie)"]
-                            chart_key = f"chart_{idx}"
-                            if chart_key in st.session_state and st.session_state[chart_key] not in chart_opts:
-                                st.session_state[chart_key] = chart_opts[0]
-
-                            chart_type = st.selectbox("圖表類型", options=chart_opts, key=chart_key)
-
-                    if x_opts:
-                        if not df_filtered.empty:
-                            fig, grouped_df = process_and_render_chart(
-                                df_filtered, x_axis, legend_axis, y_axis, chart_type, 
-                                chart_height=420 if num_charts == 1 else 360
+                            selected_vals = st.multiselect(
+                                f"📌 {col_name}", 
+                                options=avail_opts, 
+                                key=f_key
                             )
-                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # 💡 若該欄位有選擇內容：1. 套用資料過濾  2. 加入 X 軸組合陣列
+                            if selected_vals:
+                                df_filtered = df_filtered[df_filtered[col_name].astype(str).isin(selected_vals)]
+                                active_x_cols.append(col_name)
 
-                            with st.popover("⭐ 將此圖表存入常用資料夾"):
-                                if legend_axis and legend_axis != "無":
-                                    default_fav_title = f"{x_axis}-{y_axis}({legend_axis})"
-                                else:
-                                    default_fav_title = f"{x_axis}-{y_axis}"
-                                    
-                                fav_title = st.text_input("常用圖表名稱：", value=default_fav_title, key=f"fav_title_in_{idx}")
-                                
-                                if st.button("💾 確認儲存", key=f"btn_save_fav_{idx}", use_container_width=True):
-                                    if fav_title.strip():
-                                        new_fav = {
-                                            "name": fav_title.strip(),
-                                            "file": selected_filename,
-                                            "sheet": chosen_sheet,
-                                            "x_axis": x_axis,
-                                            "selected_x_vals": selected_x_vals,
-                                            "legend_axis": legend_axis,
-                                            "y_axis": y_axis,
-                                            "chart_type": chart_type
-                                        }
-                                        st.session_state.fav_list = [f for f in st.session_state.fav_list if f["name"] != fav_title.strip()]
-                                        st.session_state.fav_list.append(new_fav)
-                                        save_favorites(st.session_state.fav_list)
-                                        st.success(f"🎉 已將「{fav_title.strip()}」存入常用資料夾！")
-                                        st.rerun()
+                    st.markdown("---")
+                    st.markdown("### 其他圖表設定")
 
-                            with st.expander("🔍 查看統計數據明細"):
-                                st.dataframe(grouped_df, use_container_width=True)
-                        else:
-                            st.warning("⚠️ 請至少勾選一個 X 軸範圍項目。")
+                    # 💡 自動組合 X 軸
+                    if active_x_cols:
+                        x_axis = " / ".join(active_x_cols)
+                        
+                        
+                        # 安全組合字串，防止 float/NaN 錯誤
+                        df_filtered[x_axis] = (
+                            df_filtered[active_x_cols]
+                            .fillna("")
+                            .astype(str)
+                            .apply(lambda row: " / ".join([str(item) for item in row]), axis=1)
+                        )
+                    else:
+                        x_axis = ""
+
+                    legend_raw_opts = [col for col in TARGET_LEGEND_COLS if col in actual_cols] or TARGET_LEGEND_COLS
+                    legend_opts = ["無"] + list(dict.fromkeys(legend_raw_opts))
+
+                    leg_key = f"leg_{idx}"
+                    legend_axis = st.selectbox("🎨 圖例 (分類)", options=legend_opts, key=leg_key)
+
+                    y_opts = ["資料筆數", "不良數量"]
+                    y_axis = st.selectbox("📊 Y 軸 (統計項目)", options=y_opts, key=f"y_{idx}")
+
+                    chart_opts = ["聚集直條圖 (Grouped)", "堆疊直條圖 (Stacked)", "折線圖 (Line)", "圓餅圖 (Pie)"]
+                    chart_type = st.selectbox("📈 圖表類型", options=chart_opts, key=f"chart_{idx}")
+
+                # -------------------------------------------------------------
+                # 📌 左側面板：圖表繪製區
+                # -------------------------------------------------------------
+                with chart_col:
+                    if x_axis and not df_filtered.empty:
+                        fig, grouped_df = process_and_render_chart(
+                            df_filtered, x_axis, legend_axis, y_axis, chart_type, 
+                            chart_height=480
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        with st.popover("⭐ 將此圖表存入常用資料夾"):
+                            default_fav_title = f"{x_axis}-{y_axis}({legend_axis})" if legend_axis != "無" else f"{x_axis}-{y_axis}"
+                            fav_title = st.text_input("常用圖表名稱：", value=default_fav_title, key=f"fav_title_in_{idx}")
+                            
+                            if st.button("💾 確認儲存", key=f"btn_save_fav_{idx}", use_container_width=True):
+                                if fav_title.strip():
+                                    new_fav = {
+                                        "name": fav_title.strip(),
+                                        "file": selected_filename,
+                                        "sheet": chosen_sheet,
+                                        "x_axis": x_axis,
+                                        "legend_axis": legend_axis,
+                                        "y_axis": y_axis,
+                                        "chart_type": chart_type
+                                    }
+                                    st.session_state.fav_list = [f for f in st.session_state.fav_list if f["name"] != fav_title.strip()]
+                                    st.session_state.fav_list.append(new_fav)
+                                    save_favorites(st.session_state.fav_list)
+                                    st.success(f"🎉 已儲存「{fav_title.strip()}」！")
+                                    st.rerun()
+
+                        with st.expander("🔍 查看統計數據明細"):
+                            st.dataframe(grouped_df, use_container_width=True)
+                    else:
+                        st.info("請在右側面板的篩選器中**勾選至少一個欄位的內容**")
+
+                st.markdown("---")
 
         except Exception as e:
             st.error(f"檔案解析失敗：{e}")
-
