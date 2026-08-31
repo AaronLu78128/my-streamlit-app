@@ -623,7 +623,7 @@ else:
         st.title("📊 Data Analysis")
         file_path = os.path.join(UPLOAD_DIR, selected_filename)
 
-        FILTER_X_COLS = ["Month", "代理商", "客戶", "產品概述", "責任歸屬1", "問題分類"]
+        FILTER_X_COLS = ["Month", "代理商", "客戶", "產品概述", "責任歸屬1", "Lot no.", "問題分類"]
         TARGET_LEGEND_COLS = ["代理商", "客戶", "Month", "產品別", "責任歸屬", "責任歸屬1", "問題分類"]
 
         try:
